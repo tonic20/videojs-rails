@@ -1,6 +1,6 @@
 /*!
 Video.js - HTML5 Video Player
-Version 3.2.0
+Version 3.2.2
 
 LGPL v3 LICENSE INFO
 This file is part of Video.js. Copyright 2011 Zencoder, Inc.
@@ -78,9 +78,9 @@ VideoJS.options = {
   flash: { swf: "http://vjs.zencdn.net/c/video-js.swf" },
 
   // Default of web browser is 300x150. Should rely on source width/height.
-  width: "auto",
-  height: "auto",
-  
+  width: 300,
+  height: 150,
+
   // defaultVolume: 0.85,
   defaultVolume: 0.00, // The freakin seaguls are driving me crazy!
 
@@ -222,14 +222,6 @@ _V_.extend({
     var classNames = element.className.split(" ");
     classNames.splice(classNames.indexOf(classToRemove),1);
     element.className = classNames.join(" ");
-  },
-  
-  remove: function(item, array){
-    if (!array) return;
-    var i = array.indexOf(item);
-    if (i != -1) { 
-      return array.splice(i, 1)
-    };
   },
 
   // Attempt to block the ability to select text while dragging controls
@@ -489,7 +481,369 @@ if ("getBoundingClientRect" in document.documentElement) {
     }
     return curleft;
   };
-}// Using John Resig's Class implementation http://ejohn.org/blog/simple-javascript-inheritance/
+}// Javascript JSON implementation
+// (Parse Method Only)
+// https://github.com/douglascrockford/JSON-js/blob/master/json2.js
+
+var JSON;
+if (!JSON) { JSON = {}; }
+
+(function(){
+  var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g;
+
+  if (typeof JSON.parse !== 'function') {
+      JSON.parse = function (text, reviver) {
+          var j;
+
+          function walk(holder, key) {
+              var k, v, value = holder[key];
+              if (value && typeof value === 'object') {
+                  for (k in value) {
+                      if (Object.prototype.hasOwnProperty.call(value, k)) {
+                          v = walk(value, k);
+                          if (v !== undefined) {
+                              value[k] = v;
+                          } else {
+                              delete value[k];
+                          }
+                      }
+                  }
+              }
+              return reviver.call(holder, key, value);
+          }
+          text = String(text);
+          cx.lastIndex = 0;
+          if (cx.test(text)) {
+              text = text.replace(cx, function (a) {
+                  return '\\u' +
+                      ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
+              });
+          }
+
+          if (/^[\],:{}\s]*$/
+                  .test(text.replace(/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g, '@')
+                      .replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']')
+                      .replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
+
+              j = eval('(' + text + ')');
+
+              return typeof reviver === 'function' ?
+                  walk({'': j}, '') : j;
+          }
+
+          throw new SyntaxError('JSON.parse');
+      };
+  }
+}());
+// Event System (J.Resig - Secrets of a JS Ninja http://jsninja.com/ [Go read it, really])
+// (Book version isn't completely usable, so fixed some things and borrowed from jQuery where it's working)
+// 
+// This should work very similarly to jQuery's events, however it's based off the book version which isn't as
+// robust as jquery's, so there's probably some differences.
+// 
+// When you add an event listener using _V_.addEvent, 
+//   it stores the handler function in seperate cache object, 
+//   and adds a generic handler to the element's event,
+//   along with a unique id (guid) to the element.
+
+_V_.extend({
+
+  // Add an event listener to element
+  // It stores the handler function in a separate cache object
+  // and adds a generic handler to the element's event,
+  // along with a unique id (guid) to the element.
+  on: function(elem, type, fn){
+    var data = _V_.getData(elem), handlers;
+
+    // We only need to generate one handler per element
+    if (data && !data.handler) {
+      // Our new meta-handler that fixes the event object and the context
+      data.handler = function(event){
+        event = _V_.fixEvent(event);
+        var handlers = _V_.getData(elem).events[event.type];
+        // Go through and call all the real bound handlers
+        if (handlers) {
+          
+          // Copy handlers so if handlers are added/removed during the process it doesn't throw everything off.
+          var handlersCopy = [];
+          _V_.each(handlers, function(handler, i){
+            handlersCopy[i] = handler;
+          })
+          
+          for (var i = 0, l = handlersCopy.length; i < l; i++) {
+            handlersCopy[i].call(elem, event);
+          }
+        }
+      };
+    }
+
+    // We need a place to store all our event data
+    if (!data.events) { data.events = {}; }
+
+    // And a place to store the handlers for this event type
+    handlers = data.events[type];
+
+    if (!handlers) {
+      handlers = data.events[ type ] = [];
+
+      // Attach our meta-handler to the element, since one doesn't exist
+      if (document.addEventListener) {
+        elem.addEventListener(type, data.handler, false);
+      } else if (document.attachEvent) {
+        elem.attachEvent("on" + type, data.handler);
+      }
+    }
+
+    if (!fn.guid) { fn.guid = _V_.guid++; }
+
+    handlers.push(fn);
+  },
+  // Deprecated name for 'on' function
+  addEvent: function(){ return _V_.on.apply(this, arguments); },
+
+  off: function(elem, type, fn) {
+    var data = _V_.getData(elem), handlers;
+    // If no events exist, nothing to unbind
+    if (!data.events) { return; }
+
+    // Are we removing all bound events?
+    if (!type) {
+      for (type in data.events) {
+        _V_.cleanUpEvents(elem, type);
+      }
+      return;
+    }
+
+    // And a place to store the handlers for this event type
+    handlers = data.events[type];
+
+    // If no handlers exist, nothing to unbind
+    if (!handlers) { return; }
+
+    // See if we're only removing a single handler
+    if (fn && fn.guid) {
+      for (var i = 0; i < handlers.length; i++) {
+        // We found a match (don't stop here, there could be a couple bound)
+        if (handlers[i].guid === fn.guid) {
+          // Remove the handler from the array of handlers
+          handlers.splice(i--, 1);
+        }
+      }
+    }
+
+    _V_.cleanUpEvents(elem, type);
+  },
+  // Deprecated name for 'on' function
+  removeEvent: function(){ return _V_.off.apply(this, arguments); },
+
+  cleanUpEvents: function(elem, type) {
+    var data = _V_.getData(elem);
+    // Remove the events of a particular type if there are none left
+
+    if (data.events[type].length === 0) {
+      delete data.events[type];
+
+      // Remove the meta-handler from the element
+      if (document.removeEventListener) {
+        elem.removeEventListener(type, data.handler, false);
+      } else if (document.detachEvent) {
+        elem.detachEvent("on" + type, data.handler);
+      }
+    }
+
+    // Remove the events object if there are no types left
+    if (_V_.isEmpty(data.events)) {
+      delete data.events;
+      delete data.handler;
+    }
+
+    // Finally remove the expando if there is no data left
+    if (_V_.isEmpty(data)) {
+      _V_.removeData(elem);
+    }
+  },
+
+  fixEvent: function(event) {
+    if (event[_V_.expando]) { return event; }
+    // store a copy of the original event object
+    // and "clone" to set read-only properties
+    var originalEvent = event;
+    event = new _V_.Event(originalEvent);
+
+    for ( var i = _V_.Event.props.length, prop; i; ) {
+      prop = _V_.Event.props[ --i ];
+      event[prop] = originalEvent[prop];
+    }
+
+    // Fix target property, if necessary
+    if (!event.target) { event.target = event.srcElement || document; }
+
+    // check if target is a textnode (safari)
+    if (event.target.nodeType === 3) { event.target = event.target.parentNode; }
+
+    // Add relatedTarget, if necessary
+    if (!event.relatedTarget && event.fromElement) {
+      event.relatedTarget = event.fromElement === event.target ? event.toElement : event.fromElement;
+    }
+
+    // Calculate pageX/Y if missing and clientX/Y available
+    if ( event.pageX == null && event.clientX != null ) {
+      var eventDocument = event.target.ownerDocument || document,
+        doc = eventDocument.documentElement,
+        body = eventDocument.body;
+
+      event.pageX = event.clientX + (doc && doc.scrollLeft || body && body.scrollLeft || 0) - (doc && doc.clientLeft || body && body.clientLeft || 0);
+      event.pageY = event.clientY + (doc && doc.scrollTop  || body && body.scrollTop  || 0) - (doc && doc.clientTop  || body && body.clientTop  || 0);
+    }
+
+    // Add which for key events
+    if (event.which == null && (event.charCode != null || event.keyCode != null)) {
+      event.which = event.charCode != null ? event.charCode : event.keyCode;
+    }
+
+    // Add metaKey to non-Mac browsers (use ctrl for PC's and Meta for Macs)
+    if ( !event.metaKey && event.ctrlKey ) {
+      event.metaKey = event.ctrlKey;
+    }
+
+    // Add which for click: 1 === left; 2 === middle; 3 === right
+    // Note: button is not normalized, so don't use it
+    if ( !event.which && event.button !== undefined ) {
+      event.which = (event.button & 1 ? 1 : ( event.button & 2 ? 3 : ( event.button & 4 ? 2 : 0 ) ));
+    }
+
+    return event;
+  },
+
+  trigger: function(elem, event) {
+    var data = _V_.getData(elem),
+        parent = elem.parentNode || elem.ownerDocument,
+        type = event.type || event,
+        handler;
+
+    if (data) { handler = data.handler }
+
+    // Added in attion to book. Book code was broke.
+    event = typeof event === "object" ?
+      event[_V_.expando] ? 
+        event :
+        new _V_.Event(type, event) :
+      new _V_.Event(type);
+
+    event.type = type;
+    if (handler) {
+      handler.call(elem, event);
+    }
+
+    // Clean up the event in case it is being reused
+    event.result = undefined;
+    event.target = elem;
+
+    // Bubble the event up the tree to the document,
+    // Unless it's been explicitly stopped
+    // if (parent && !event.isPropagationStopped()) {
+    //   _V_.triggerEvent(parent, event);
+    // 
+    // // We're at the top document so trigger the default action
+    // } else if (!parent && !event.isDefaultPrevented()) {
+    //   // log(type);
+    //   var targetData = _V_.getData(event.target);
+    //   // log(targetData);
+    //   var targetHandler = targetData.handler;
+    //   // log("2");
+    //   if (event.target[event.type]) {
+    //     // Temporarily disable the bound handler,
+    //     // don't want to execute it twice
+    //     if (targetHandler) {
+    //       targetData.handler = function(){};
+    //     }
+    // 
+    //     // Trigger the native event (click, focus, blur)
+    //     event.target[event.type]();
+    // 
+    //     // Restore the handler
+    //     if (targetHandler) {
+    //       targetData.handler = targetHandler;
+    //     }
+    //   }
+    // }
+  },
+  // Deprecated name for 'on' function
+  triggerEvent: function(){ return _V_.trigger.apply(this, arguments); },
+
+  one: function(elem, type, fn) {
+    _V_.on(elem, type, function(){
+      _V_.off(elem, type, arguments.callee)
+      fn.apply(this, arguments);
+    });
+  }
+});
+
+// Custom Event object for standardizing event objects between browsers.
+_V_.Event = function(src, props){
+  // Event object
+  if (src && src.type) {
+    this.originalEvent = src;
+    this.type = src.type;
+
+    // Events bubbling up the document may have been marked as prevented
+    // by a handler lower down the tree; reflect the correct value.
+    this.isDefaultPrevented = (src.defaultPrevented || src.returnValue === false ||
+      src.getPreventDefault && src.getPreventDefault()) ? returnTrue : returnFalse;
+
+  // Event type
+  } else {
+    this.type = src;
+  }
+
+  // Put explicitly provided properties onto the event object
+  if (props) { _V_.merge(this, props); }
+
+  this.timeStamp = (new Date).getTime();
+
+  // Mark it as fixed
+  this[_V_.expando] = true;
+};
+
+_V_.Event.prototype = {
+  preventDefault: function() {
+    this.isDefaultPrevented = returnTrue;
+
+    var e = this.originalEvent;
+    if (!e) { return; }
+
+    // if preventDefault exists run it on the original event
+    if (e.preventDefault) { 
+      e.preventDefault();
+    // otherwise set the returnValue property of the original event to false (IE)
+    } else {
+      e.returnValue = false;
+    }
+  },
+  stopPropagation: function() {
+    this.isPropagationStopped = returnTrue;
+
+    var e = this.originalEvent;
+    if (!e) { return; }
+    // if stopPropagation exists run it on the original event
+    if (e.stopPropagation) { e.stopPropagation(); }
+    // otherwise set the cancelBubble property of the original event to true (IE)
+    e.cancelBubble = true;
+  },
+  stopImmediatePropagation: function() {
+    this.isImmediatePropagationStopped = returnTrue;
+    this.stopPropagation();
+  },
+  isDefaultPrevented: returnFalse,
+  isPropagationStopped: returnFalse,
+  isImmediatePropagationStopped: returnFalse
+};
+_V_.Event.props = "altKey attrChange attrName bubbles button cancelable charCode clientX clientY ctrlKey currentTarget data detail eventPhase fromElement handler keyCode metaKey newValue offsetX offsetY pageX pageY prevValue relatedNode relatedTarget screenX screenY shiftKey srcElement target toElement view wheelDelta which".split(" ");
+
+function returnTrue(){ return true; }
+function returnFalse(){ return false; }
+
+// Using John Resig's Class implementation http://ejohn.org/blog/simple-javascript-inheritance/
 // (function(){var initializing=false, fnTest=/xyz/.test(function(){xyz;}) ? /\b_super\b/ : /.*/; _V_.Class = function(){}; _V_.Class.extend = function(prop) { var _super = this.prototype; initializing = true; var prototype = new this(); initializing = false; for (var name in prop) { prototype[name] = typeof prop[name] == "function" && typeof _super[name] == "function" && fnTest.test(prop[name]) ? (function(name, fn){ return function() { var tmp = this._super; this._super = _super[name]; var ret = fn.apply(this, arguments); this._super = tmp; return ret; }; })(name, prop[name]) : prop[name]; } function Class() { if ( !initializing && this.init ) this.init.apply(this, arguments); } Class.prototype = prototype; Class.constructor = Class; Class.extend = arguments.callee; return Class;};})();
 (function(){
   var initializing = false, fnTest = /xyz/.test(function(){xyz;}) ? /\b_super\b/ : /.*/;
@@ -661,17 +1015,30 @@ _V_.Component = _V_.Class.extend({
 
   /* Events
   ================================================================================ */
-  addEvent: function(type, fn, uid){
-    return _V_.addEvent(this.el, type, _V_.proxy(this, fn));
+  on: function(type, fn, uid){
+    _V_.on(this.el, type, _V_.proxy(this, fn));
+    return this;
   },
-  removeEvent: function(type, fn){
-    return _V_.removeEvent(this.el, type, fn);
+  // Deprecated name for 'on' function
+  addEvent: function(){ return this.on.apply(this, arguments); },
+
+  off: function(type, fn){
+    _V_.off(this.el, type, fn);
+    return this;
   },
-  triggerEvent: function(type, e){
-    return _V_.triggerEvent(this.el, type, e);
+  // Deprecated name for 'off' function
+  removeEvent: function(){ return this.off.apply(this, arguments); },
+
+  trigger: function(type, e){
+    _V_.trigger(this.el, type, e);
+    return this;
   },
+  // Deprecated name for 'off' function
+  triggerEvent: function(){ return this.trigger.apply(this, arguments); },
+
   one: function(type, fn) {
     _V_.one(this.el, type, _V_.proxy(this, fn));
+    return this;
   },
 
   /* Ready - Trigger functions when component is ready
@@ -703,7 +1070,7 @@ _V_.Component = _V_.Class.extend({
       this.readyQueue = [];
 
       // Allow for using event listeners also, in case you want to do something everytime a source is ready.
-      this.triggerEvent("ready");
+      this.trigger("ready");
     }
   },
 
@@ -718,1425 +1085,7 @@ _V_.Component = _V_.Class.extend({
   // More easily attach 'this' to functions
   proxy: function(fn, uid){  return _V_.proxy(this, fn, uid); }
 
-});/* Control - Base class for all control elements
-================================================================================ */
-_V_.Control = _V_.Component.extend({
-
-  buildCSSClass: function(){
-    return "vjs-control " + this._super();
-  }
-
-});
-
-/* Control Bar
-================================================================================ */
-_V_.ControlBar = _V_.Component.extend({
-
-  options: {
-    loadEvent: "play",
-    components: {
-      "playToggle": {},
-      "fullscreenToggle": {},
-      "currentTimeDisplay": {},
-      "timeDivider": {},
-      "durationDisplay": {},
-      "remainingTimeDisplay": {},
-      "progressControl": {},
-      "volumeControl": {},
-      "muteToggle": {}
-    }
-  },
-
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("play", this.proxy(function(){
-      this.fadeIn();
-      this.player.addEvent("mouseover", this.proxy(this.fadeIn));
-      this.player.addEvent("mouseout", this.proxy(this.fadeOut));
-    }));
-
-  },
-
-  createElement: function(){
-    return _V_.createElement("div", {
-      className: "vjs-controls"
-    });
-  },
-
-  fadeIn: function(){
-    this._super();
-    this.player.triggerEvent("controlsvisible");
-  },
-
-  fadeOut: function(){
-    this._super();
-    this.player.triggerEvent("controlshidden");
-  },
-
-  lockShowing: function(){
-    this.el.style.opacity = "1";
-  }
-
-});
-
-/* Button - Base class for all buttons
-================================================================================ */
-_V_.Button = _V_.Control.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-
-    this.addEvent("click", this.onClick);
-    this.addEvent("focus", this.onFocus);
-    this.addEvent("blur", this.onBlur);
-  },
-
-  createElement: function(type, attrs){
-    // Add standard Aria and Tabindex info
-    attrs = _V_.merge({
-      className: this.buildCSSClass(),
-      innerHTML: '<div><span class="vjs-control-text">' + (this.buttonText || "Need Text") + '</span></div>',
-      role: "button",
-      tabIndex: 0
-    }, attrs);
-
-    return this._super(type, attrs);
-  },
-
-  // Click - Override with specific functionality for button
-  onClick: function(){},
-
-  // Focus - Add keyboard functionality to element
-  onFocus: function(){
-    _V_.addEvent(document, "keyup", _V_.proxy(this, this.onKeyPress));
-  },
-
-  // KeyPress (document level) - Trigger click when keys are pressed
-  onKeyPress: function(event){
-    // Check for space bar (32) or enter (13) keys
-    if (event.which == 32 || event.which == 13) {
-      event.preventDefault();
-      this.onClick();
-    }
-  },
-
-  // Blur - Remove keyboard triggers
-  onBlur: function(){
-    _V_.removeEvent(document, "keyup", _V_.proxy(this, this.onKeyPress));
-  }
-
-});
-
-/* Play Button
-================================================================================ */
-_V_.PlayButton = _V_.Button.extend({
-
-  buttonText: "Play",
-
-  buildCSSClass: function(){
-    return "vjs-play-button " + this._super();
-  },
-
-  onClick: function(){
-    this.player.play();
-  }
-
-});
-
-/* Pause Button
-================================================================================ */
-_V_.PauseButton = _V_.Button.extend({
-
-  buttonText: "Pause",
-
-  buildCSSClass: function(){
-    return "vjs-pause-button " + this._super();
-  },
-
-  onClick: function(){
-    this.player.pause();
-  }
-
-});
-
-/* Play Toggle - Play or Pause Media
-================================================================================ */
-_V_.PlayToggle = _V_.Button.extend({
-
-  buttonText: "Play",
-
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("play", _V_.proxy(this, this.onPlay));
-    player.addEvent("pause", _V_.proxy(this, this.onPause));
-  },
-
-  buildCSSClass: function(){
-    return "vjs-play-control " + this._super();
-  },
-
-  // OnClick - Toggle between play and pause
-  onClick: function(){
-    if (this.player.paused()) {
-      this.player.play();
-    } else {
-      this.player.pause();
-    }
-  },
-
-  // OnPlay - Add the vjs-playing class to the element so it can change appearance
-  onPlay: function(){
-    _V_.removeClass(this.el, "vjs-paused");
-    _V_.addClass(this.el, "vjs-playing");
-  },
-
-  // OnPause - Add the vjs-paused class to the element so it can change appearance
-  onPause: function(){
-    _V_.removeClass(this.el, "vjs-playing");
-    _V_.addClass(this.el, "vjs-paused");
-  }
-
-});
-
-
-/* Fullscreen Toggle Behaviors
-================================================================================ */
-_V_.FullscreenToggle = _V_.Button.extend({
-
-  buttonText: "Fullscreen",
-
-  buildCSSClass: function(){
-    return "vjs-fullscreen-control " + this._super();
-  },
-
-  onClick: function(){
-    if (!this.player.isFullScreen) {
-      this.player.requestFullScreen();
-    } else {
-      this.player.cancelFullScreen();
-    }
-  }
-
-});
-
-/* Big Play Button
-================================================================================ */
-_V_.BigPlayButton = _V_.Button.extend({
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("play", _V_.proxy(this, this.hide));
-    player.addEvent("ended", _V_.proxy(this, this.show));
-  },
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-big-play-button",
-      innerHTML: "<span></span>"
-    });
-  },
-
-  onClick: function(){
-    // Go back to the beginning if big play button is showing at the end.
-    // Have to check for current time otherwise it might throw a 'not ready' error.
-    if(this.player.currentTime()) {
-      this.player.currentTime(0);
-    }
-    this.player.play();
-  }
-});
-
-/* Loading Spinner
-================================================================================ */
-_V_.LoadingSpinner = _V_.Component.extend({
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("canplay", _V_.proxy(this, this.hide));
-    player.addEvent("canplaythrough", _V_.proxy(this, this.hide));
-    player.addEvent("playing", _V_.proxy(this, this.hide));
-
-    player.addEvent("seeking", _V_.proxy(this, this.show));
-    player.addEvent("error", _V_.proxy(this, this.show));
-
-    // Not showing spinner on stalled any more. Browsers may stall and then not trigger any events that would remove the spinner.
-    // Checked in Chrome 16 and Safari 5.1.2. http://help.videojs.com/discussions/problems/883-why-is-the-download-progress-showing
-    // player.addEvent("stalled", _V_.proxy(this, this.show));
-
-    player.addEvent("waiting", _V_.proxy(this, this.show));
-  },
-
-  createElement: function(){
-
-    var classNameSpinner, innerHtmlSpinner;
-
-    if ( typeof this.player.el.style.WebkitBorderRadius == "string"
-         || typeof this.player.el.style.MozBorderRadius == "string"
-         || typeof this.player.el.style.KhtmlBorderRadius == "string"
-         || typeof this.player.el.style.borderRadius == "string")
-      {
-        classNameSpinner = "vjs-loading-spinner";
-        innerHtmlSpinner = "<div class='ball1'></div><div class='ball2'></div><div class='ball3'></div><div class='ball4'></div><div class='ball5'></div><div class='ball6'></div><div class='ball7'></div><div class='ball8'></div>";
-      } else {
-        classNameSpinner = "vjs-loading-spinner-fallback";
-        innerHtmlSpinner = "";
-      }
-
-    return this._super("div", {
-      className: classNameSpinner,
-      innerHTML: innerHtmlSpinner
-    });
-  }
-});
-
-/* Time
-================================================================================ */
-_V_.CurrentTimeDisplay = _V_.Component.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("timeupdate", _V_.proxy(this, this.updateContent));
-  },
-
-  createElement: function(){
-    var el = this._super("div", {
-      className: "vjs-current-time vjs-time-controls vjs-control"
-    });
-
-    this.content = _V_.createElement("div", {
-      className: "vjs-current-time-display",
-      innerHTML: '0:00'
-    });
-
-    el.appendChild(_V_.createElement("div").appendChild(this.content));
-    return el;
-  },
-
-  updateContent: function(){
-    // Allows for smooth scrubbing, when player can't keep up.
-    var time = (this.player.scrubbing) ? this.player.values.currentTime : this.player.currentTime();
-    this.content.innerHTML = _V_.formatTime(time, this.player.duration());
-  }
-
-});
-
-_V_.DurationDisplay = _V_.Component.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("timeupdate", _V_.proxy(this, this.updateContent));
-  },
-
-  createElement: function(){
-    var el = this._super("div", {
-      className: "vjs-duration vjs-time-controls vjs-control"
-    });
-
-    this.content = _V_.createElement("div", {
-      className: "vjs-duration-display",
-      innerHTML: '0:00'
-    });
-
-    el.appendChild(_V_.createElement("div").appendChild(this.content));
-    return el;
-  },
-
-  updateContent: function(){
-    if (this.player.duration()) { this.content.innerHTML = _V_.formatTime(this.player.duration()); }
-  }
-
-});
-
-// Time Separator (Not used in main skin, but still available, and could be used as a 'spare element')
-_V_.TimeDivider = _V_.Component.extend({
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-time-divider",
-      innerHTML: '<div><span>/</span></div>'
-    });
-  }
-
-});
-
-_V_.RemainingTimeDisplay = _V_.Component.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("timeupdate", _V_.proxy(this, this.updateContent));
-  },
-
-  createElement: function(){
-    var el = this._super("div", {
-      className: "vjs-remaining-time vjs-time-controls vjs-control"
-    });
-
-    this.content = _V_.createElement("div", {
-      className: "vjs-remaining-time-display",
-      innerHTML: '-0:00'
-    });
-
-    el.appendChild(_V_.createElement("div").appendChild(this.content));
-    return el;
-  },
-
-  updateContent: function(){
-    if (this.player.duration()) { this.content.innerHTML = "-"+_V_.formatTime(this.player.remainingTime()); }
-
-    // Allows for smooth scrubbing, when player can't keep up.
-    // var time = (this.player.scrubbing) ? this.player.values.currentTime : this.player.currentTime();
-    // this.content.innerHTML = _V_.formatTime(time, this.player.duration());
-  }
-
-});
-
-/* Slider - Parent for seek bar and volume slider
-================================================================================ */
-_V_.Slider = _V_.Component.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent(this.playerEvent, _V_.proxy(this, this.update));
-
-    this.addEvent("mousedown", this.onMouseDown);
-    this.addEvent("focus", this.onFocus);
-    this.addEvent("blur", this.onBlur);
-
-    this.player.addEvent("controlsvisible", this.proxy(this.update));
-
-    // This is actually to fix the volume handle position. http://twitter.com/#!/gerritvanaaken/status/159046254519787520
-    // this.player.one("timeupdate", this.proxy(this.update));
-
-    this.update();
-  },
-
-  createElement: function(type, attrs) {
-    attrs = _V_.merge({
-      role: "slider",
-      "aria-valuenow": 0,
-      "aria-valuemin": 0,
-      "aria-valuemax": 100,
-      tabIndex: 0
-    }, attrs);
-
-    return this._super(type, attrs);
-  },
-
-  onMouseDown: function(event){
-    event.preventDefault();
-    _V_.blockTextSelection();
-
-    _V_.addEvent(document, "mousemove", _V_.proxy(this, this.onMouseMove));
-    _V_.addEvent(document, "mouseup", _V_.proxy(this, this.onMouseUp));
-
-    this.onMouseMove(event);
-  },
-
-  onMouseUp: function(event) {
-    _V_.unblockTextSelection();
-    _V_.removeEvent(document, "mousemove", this.onMouseMove, false);
-    _V_.removeEvent(document, "mouseup", this.onMouseUp, false);
-
-    this.update();
-  },
-
-  update: function(){
-    // If scrubbing, we could use a cached value to make the handle keep up with the user's mouse.
-    // On HTML5 browsers scrubbing is really smooth, but some flash players are slow, so we might want to utilize this later.
-    // var progress =  (this.player.scrubbing) ? this.player.values.currentTime / this.player.duration() : this.player.currentTime() / this.player.duration();
-
-    var barProgress,
-        progress = this.getPercent();
-        handle = this.handle,
-        bar = this.bar;
-
-    // Protect against no duration and other division issues
-    if (isNaN(progress)) { progress = 0; }
-
-    barProgress = progress;
-
-    // If there is a handle, we need to account for the handle in our calculation for progress bar
-    // so that it doesn't fall short of or extend past the handle.
-    if (handle) {
-
-      var box = this.el,
-          boxWidth = box.offsetWidth,
-
-          handleWidth = handle.el.offsetWidth,
-
-          // The width of the handle in percent of the containing box
-          // In IE, widths may not be ready yet causing NaN
-          handlePercent = (handleWidth) ? handleWidth / boxWidth : 0,
-
-          // Get the adjusted size of the box, considering that the handle's center never touches the left or right side.
-          // There is a margin of half the handle's width on both sides.
-          boxAdjustedPercent = 1 - handlePercent;
-
-          // Adjust the progress that we'll use to set widths to the new adjusted box width
-          adjustedProgress = progress * boxAdjustedPercent,
-
-          // The bar does reach the left side, so we need to account for this in the bar's width
-          barProgress = adjustedProgress + (handlePercent / 2);
-
-      // Move the handle from the left based on the adjected progress
-      handle.el.style.left = _V_.round(adjustedProgress * 100, 2) + "%";
-    }
-
-    // Set the new bar width
-    bar.el.style.width = _V_.round(barProgress * 100, 2) + "%";
-  },
-
-  calculateDistance: function(event){
-    var box = this.el,
-        boxX = _V_.findPosX(box),
-        boxW = box.offsetWidth,
-        handle = this.handle;
-
-    if (handle) {
-      var handleW = handle.el.offsetWidth;
-
-      // Adjusted X and Width, so handle doesn't go outside the bar
-      boxX = boxX + (handleW / 2);
-      boxW = boxW - handleW;
-    }
-
-    // Percent that the click is through the adjusted area
-    return Math.max(0, Math.min(1, (event.pageX - boxX) / boxW));
-  },
-
-  onFocus: function(event){
-    _V_.addEvent(document, "keyup", _V_.proxy(this, this.onKeyPress));
-  },
-
-  onKeyPress: function(event){
-    if (event.which == 37) { // Left Arrow
-      event.preventDefault();
-      this.stepBack();
-    } else if (event.which == 39) { // Right Arrow
-      event.preventDefault();
-      this.stepForward();
-    }
-  },
-
-  onBlur: function(event){
-    _V_.removeEvent(document, "keyup", _V_.proxy(this, this.onKeyPress));
-  }
-});
-
-
-/* Progress
-================================================================================ */
-
-// Progress Control: Seek, Load Progress, and Play Progress
-_V_.ProgressControl = _V_.Component.extend({
-
-  options: {
-    components: {
-      "seekBar": {}
-    }
-  },
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-progress-control vjs-control"
-    });
-  }
-
-});
-
-// Seek Bar and holder for the progress bars
-_V_.SeekBar = _V_.Slider.extend({
-
-  options: {
-    components: {
-      "loadProgressBar": {},
-
-      // Set property names to bar and handle to match with the parent Slider class is looking for
-      "bar": { componentClass: "PlayProgressBar" },
-      "handle": { componentClass: "SeekHandle" }
-    }
-  },
-
-  playerEvent: "timeupdate",
-
-  init: function(player, options){
-    this._super(player, options);
-  },
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-progress-holder"
-    });
-  },
-
-  getPercent: function(){
-    return this.player.currentTime() / this.player.duration();
-  },
-
-  onMouseDown: function(event){
-    this._super(event);
-
-    this.player.scrubbing = true;
-
-    this.videoWasPlaying = !this.player.paused();
-    this.player.pause();
-  },
-
-  onMouseMove: function(event){
-    var newTime = this.calculateDistance(event) * this.player.duration();
-
-    // Don't let video end while scrubbing.
-    if (newTime == this.player.duration()) { newTime = newTime - 0.1; }
-
-    // Set new time (tell player to seek to new time)
-    this.player.currentTime(newTime);
-  },
-
-  onMouseUp: function(event){
-    this._super(event);
-
-    this.player.scrubbing = false;
-    if (this.videoWasPlaying) {
-      this.player.play();
-    }
-  },
-
-  stepForward: function(){
-    this.player.currentTime(this.player.currentTime() + 1);
-  },
-
-  stepBack: function(){
-    this.player.currentTime(this.player.currentTime() - 1);
-  }
-
-});
-
-// Load Progress Bar
-_V_.LoadProgressBar = _V_.Component.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-    player.addEvent("progress", _V_.proxy(this, this.update));
-  },
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-load-progress",
-      innerHTML: '<span class="vjs-control-text">Loaded: 0%</span>'
-    });
-  },
-
-  update: function(){
-    if (this.el.style) { this.el.style.width = _V_.round(this.player.bufferedPercent() * 100, 2) + "%"; }
-  }
-
-});
-
-// Play Progress Bar
-_V_.PlayProgressBar = _V_.Component.extend({
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-play-progress",
-      innerHTML: '<span class="vjs-control-text">Progress: 0%</span>'
-    });
-  }
-
-});
-
-// Seek Handle
-// SeekBar Behavior includes play progress bar, and seek handle
-// Needed so it can determine seek position based on handle position/size
-_V_.SeekHandle = _V_.Component.extend({
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-seek-handle",
-      innerHTML: '<span class="vjs-control-text">00:00</span>'
-    });
-  }
-
-});
-
-/* Volume Scrubber
-================================================================================ */
-// Progress Control: Seek, Load Progress, and Play Progress
-_V_.VolumeControl = _V_.Component.extend({
-
-  options: {
-    components: {
-      "volumeBar": {}
-    }
-  },
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-volume-control vjs-control"
-    });
-  }
-
-});
-
-_V_.VolumeBar = _V_.Slider.extend({
-
-  options: {
-    components: {
-      "bar": { componentClass: "VolumeLevel" },
-      "handle": { componentClass: "VolumeHandle" }
-    }
-  },
-
-  playerEvent: "volumechange",
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-volume-bar"
-    });
-  },
-
-  onMouseMove: function(event) {
-    this.player.volume(this.calculateDistance(event));
-  },
-
-  getPercent: function(){
-   return this.player.volume();
-  },
-
-  stepForward: function(){
-    this.player.volume(this.player.volume() + 0.1);
-  },
-
-  stepBack: function(){
-    this.player.volume(this.player.volume() - 0.1);
-  }
-});
-
-_V_.VolumeLevel = _V_.Component.extend({
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-volume-level",
-      innerHTML: '<span class="vjs-control-text"></span>'
-    });
-  }
-
-});
-
-_V_.VolumeHandle = _V_.Component.extend({
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-volume-handle",
-      innerHTML: '<span class="vjs-control-text"></span>'
-      // tabindex: 0,
-      // role: "slider", "aria-valuenow": 0, "aria-valuemin": 0, "aria-valuemax": 100
-    });
-  }
-
-});
-
-_V_.MuteToggle = _V_.Button.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-
-    player.addEvent("volumechange", _V_.proxy(this, this.update));
-  },
-
-  createElement: function(){
-    return this._super("div", {
-      className: "vjs-mute-control vjs-control",
-      innerHTML: '<div><span class="vjs-control-text">Mute</span></div>'
-    });
-  },
-
-  onClick: function(event){
-    this.player.muted( this.player.muted() ? false : true );
-  },
-
-  update: function(event){
-    var vol = this.player.volume(),
-        level = 3;
-
-    if (vol == 0 || this.player.muted()) {
-      level = 0;
-    } else if (vol < 0.33) {
-      level = 1;
-    } else if (vol < 0.67) {
-      level = 2;
-    }
-
-    /* TODO improve muted icon classes */
-    _V_.each.call(this, [0,1,2,3], function(i){
-      _V_.removeClass(this.el, "vjs-vol-"+i);
-    });
-    _V_.addClass(this.el, "vjs-vol-"+level);
-  }
-
-});
-
-
-/* Poster Image
-================================================================================ */
-_V_.PosterImage = _V_.Button.extend({
-  init: function(player, options){
-    this._super(player, options);
-
-    if (!this.player.options.poster) {
-      this.hide();
-    }
-
-    player.addEvent("play", _V_.proxy(this, this.hide));
-  },
-
-  createElement: function(){
-    return _V_.createElement("img", {
-      className: "vjs-poster",
-      src: this.player.options.poster,
-
-      // Don't want poster to be tabbable.
-      tabIndex: -1
-    });
-  },
-
-  onClick: function(){
-    this.player.play();
-  }
-});
-
-/* Menu
-================================================================================ */
-// The base for text track and settings menu buttons.
-_V_.Menu = _V_.Component.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-  },
-
-  addItem: function(component){
-    this.addComponent(component);
-    component.addEvent("click", this.proxy(function(){
-      this.unlockShowing();
-    }));
-  },
-
-  createElement: function(){
-    return this._super("ul", {
-      className: "vjs-menu"
-    });
-  }
-
-});
-
-_V_.MenuItem = _V_.Button.extend({
-
-  init: function(player, options){
-    this._super(player, options);
-
-    if (options.selected) {
-      this.addClass("vjs-selected");
-    }
-  },
-
-  createElement: function(type, attrs){
-    return this._super("li", _V_.merge({
-      className: "vjs-menu-item",
-      innerHTML: this.options.label
-    }, attrs));
-  },
-
-  onClick: function(){
-    this.selected(true);
-  },
-
-  selected: function(selected){
-    if (selected) {
-      this.addClass("vjs-selected");
-    } else {
-      this.removeClass("vjs-selected")
-    }
-  }
-
-});// ECMA-262 is the standard for javascript.
-// The following methods are impelemented EXACTLY as described in the standard (according to Mozilla Docs), and do not override the default method if one exists.
-// This may conflict with other libraries that modify the array prototype, but those libs should update to use the standard.
-
-// [].indexOf
-// https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Array/indexOf
-if (!Array.prototype.indexOf) {
-    Array.prototype.indexOf = function (searchElement /*, fromIndex */ ) {
-        "use strict";
-        if (this === void 0 || this === null) {
-            throw new TypeError();
-        }
-        var t = Object(this);
-        var len = t.length >>> 0;
-        if (len === 0) {
-            return -1;
-        }
-        var n = 0;
-        if (arguments.length > 0) {
-            n = Number(arguments[1]);
-            if (n !== n) { // shortcut for verifying if it's NaN
-                n = 0;
-            } else if (n !== 0 && n !== (1 / 0) && n !== -(1 / 0)) {
-                n = (n > 0 || -1) * Math.floor(Math.abs(n));
-            }
-        }
-        if (n >= len) {
-            return -1;
-        }
-        var k = n >= 0 ? n : Math.max(len - Math.abs(n), 0);
-        for (; k < len; k++) {
-            if (k in t && t[k] === searchElement) {
-                return k;
-            }
-        }
-        return -1;
-    }
-}
-
-// NOT NEEDED YET
-// [].lastIndexOf
-// https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Array/lastIndexOf
-// if (!Array.prototype.lastIndexOf)
-// {
-//   Array.prototype.lastIndexOf = function(searchElement /*, fromIndex*/)
-//   {
-//     "use strict";
-// 
-//     if (this === void 0 || this === null)
-//       throw new TypeError();
-// 
-//     var t = Object(this);
-//     var len = t.length >>> 0;
-//     if (len === 0)
-//       return -1;
-// 
-//     var n = len;
-//     if (arguments.length > 1)
-//     {
-//       n = Number(arguments[1]);
-//       if (n !== n)
-//         n = 0;
-//       else if (n !== 0 && n !== (1 / 0) && n !== -(1 / 0))
-//         n = (n > 0 || -1) * Math.floor(Math.abs(n));
-//     }
-// 
-//     var k = n >= 0
-//           ? Math.min(n, len - 1)
-//           : len - Math.abs(n);
-// 
-//     for (; k >= 0; k--)
-//     {
-//       if (k in t && t[k] === searchElement)
-//         return k;
-//     }
-//     return -1;
-//   };
-// }
-
-
-// NOT NEEDED YET
-// Array forEach per ECMA standard https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/array/foreach
-// Production steps of ECMA-262, Edition 5, 15.4.4.18
-// Reference: http://es5.github.com/#x15.4.4.18
-// if ( !Array.prototype.forEach ) {
-// 
-//   Array.prototype.forEach = function( callback, thisArg ) {
-// 
-//     var T, k;
-// 
-//     if ( this == null ) {
-//       throw new TypeError( " this is null or not defined" );
-//     }
-// 
-//     // 1. Let O be the result of calling ToObject passing the |this| value as the argument.
-//     var O = Object(this);
-// 
-//     // 2. Let lenValue be the result of calling the Get internal method of O with the argument "length".
-//     // 3. Let len be ToUint32(lenValue).
-//     var len = O.length >>> 0;
-// 
-//     // 4. If IsCallable(callback) is false, throw a TypeError exception.
-//     // See: http://es5.github.com/#x9.11
-//     if ( {}.toString.call(callback) != "[object Function]" ) {
-//       throw new TypeError( callback + " is not a function" );
-//     }
-// 
-//     // 5. If thisArg was supplied, let T be thisArg; else let T be undefined.
-//     if ( thisArg ) {
-//       T = thisArg;
-//     }
-// 
-//     // 6. Let k be 0
-//     k = 0;
-// 
-//     // 7. Repeat, while k < len
-//     while( k < len ) {
-// 
-//       var kValue;
-// 
-//       // a. Let Pk be ToString(k).
-//       //   This is implicit for LHS operands of the in operator
-//       // b. Let kPresent be the result of calling the HasProperty internal method of O with argument Pk.
-//       //   This step can be combined with c
-//       // c. If kPresent is true, then
-//       if ( k in O ) {
-// 
-//         // i. Let kValue be the result of calling the Get internal method of O with argument Pk.
-//         kValue = O[ Pk ];
-// 
-//         // ii. Call the Call internal method of callback with T as the this value and
-//         // argument list containing kValue, k, and O.
-//         callback.call( T, kValue, k, O );
-//       }
-//       // d. Increase k by 1.
-//       k++;
-//     }
-//     // 8. return undefined
-//   };
-// }
-
-
-// NOT NEEDED YET
-// https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Array/map
-// Production steps of ECMA-262, Edition 5, 15.4.4.19
-// Reference: http://es5.github.com/#x15.4.4.19
-// if (!Array.prototype.map) {
-//   Array.prototype.map = function(callback, thisArg) {
-// 
-//     var T, A, k;
-// 
-//     if (this == null) {
-//       throw new TypeError(" this is null or not defined");
-//     }
-// 
-//     // 1. Let O be the result of calling ToObject passing the |this| value as the argument.
-//     var O = Object(this);
-// 
-//     // 2. Let lenValue be the result of calling the Get internal method of O with the argument "length".
-//     // 3. Let len be ToUint32(lenValue).
-//     var len = O.length >>> 0;
-// 
-//     // 4. If IsCallable(callback) is false, throw a TypeError exception.
-//     // See: http://es5.github.com/#x9.11
-//     if ({}.toString.call(callback) != "[object Function]") {
-//       throw new TypeError(callback + " is not a function");
-//     }
-// 
-//     // 5. If thisArg was supplied, let T be thisArg; else let T be undefined.
-//     if (thisArg) {
-//       T = thisArg;
-//     }
-// 
-//     // 6. Let A be a new array created as if by the expression new Array(len) where Array is
-//     // the standard built-in constructor with that name and len is the value of len.
-//     A = new Array(len);
-// 
-//     // 7. Let k be 0
-//     k = 0;
-// 
-//     // 8. Repeat, while k < len
-//     while(k < len) {
-// 
-//       var kValue, mappedValue;
-// 
-//       // a. Let Pk be ToString(k).
-//       //   This is implicit for LHS operands of the in operator
-//       // b. Let kPresent be the result of calling the HasProperty internal method of O with argument Pk.
-//       //   This step can be combined with c
-//       // c. If kPresent is true, then
-//       if (k in O) {
-// 
-//         // i. Let kValue be the result of calling the Get internal method of O with argument Pk.
-//         kValue = O[ k ];
-// 
-//         // ii. Let mappedValue be the result of calling the Call internal method of callback
-//         // with T as the this value and argument list containing kValue, k, and O.
-//         mappedValue = callback.call(T, kValue, k, O);
-// 
-//         // iii. Call the DefineOwnProperty internal method of A with arguments
-//         // Pk, Property Descriptor {Value: mappedValue, Writable: true, Enumerable: true, Configurable: true},
-//         // and false.
-// 
-//         // In browsers that support Object.defineProperty, use the following:
-//         // Object.defineProperty(A, Pk, { value: mappedValue, writable: true, enumerable: true, configurable: true });
-// 
-//         // For best browser support, use the following:
-//         A[ k ] = mappedValue;
-//       }
-//       // d. Increase k by 1.
-//       k++;
-//     }
-// 
-//     // 9. return A
-//     return A;
-//   };      
-// }
-// Event System (J.Resig - Secrets of a JS Ninja http://jsninja.com/ [Go read it, really])
-// (Book version isn't completely usable, so fixed some things and borrowed from jQuery where it's working)
-// 
-// This should work very similarly to jQuery's events, however it's based off the book version which isn't as
-// robust as jquery's, so there's probably some differences.
-// 
-// When you add an event listener using _V_.addEvent, 
-//   it stores the handler function in seperate cache object, 
-//   and adds a generic handler to the element's event,
-//   along with a unique id (guid) to the element.
-
-_V_.extend({
-
-  // Add an event listener to element
-  // It stores the handler function in a separate cache object
-  // and adds a generic handler to the element's event,
-  // along with a unique id (guid) to the element.
-  addEvent: function(elem, type, fn){
-    var data = _V_.getData(elem), handlers;
-
-    // We only need to generate one handler per element
-    if (data && !data.handler) {
-      // Our new meta-handler that fixes the event object and the context
-      data.handler = function(event){
-        event = _V_.fixEvent(event);
-        var handlers = _V_.getData(elem).events[event.type];
-        // Go through and call all the real bound handlers
-        if (handlers) {
-          
-          // Copy handlers so if handlers are added/removed during the process it doesn't throw everything off.
-          var handlersCopy = [];
-          _V_.each(handlers, function(handler, i){
-            handlersCopy[i] = handler;
-          })
-          
-          for (var i = 0, l = handlersCopy.length; i < l; i++) {
-            handlersCopy[i].call(elem, event);
-          }
-        }
-      };
-    }
-
-    // We need a place to store all our event data
-    if (!data.events) { data.events = {}; }
-
-    // And a place to store the handlers for this event type
-    handlers = data.events[type];
-
-    if (!handlers) {
-      handlers = data.events[ type ] = [];
-
-      // Attach our meta-handler to the element, since one doesn't exist
-      if (document.addEventListener) {
-        elem.addEventListener(type, data.handler, false);
-      } else if (document.attachEvent) {
-        elem.attachEvent("on" + type, data.handler);
-      }
-    }
-
-    if (!fn.guid) { fn.guid = _V_.guid++; }
-
-    handlers.push(fn);
-  },
-
-  removeEvent: function(elem, type, fn) {
-    var data = _V_.getData(elem), handlers;
-    // If no events exist, nothing to unbind
-    if (!data.events) { return; }
-
-    // Are we removing all bound events?
-    if (!type) {
-      for (type in data.events) {
-        _V_.cleanUpEvents(elem, type);
-      }
-      return;
-    }
-
-    // And a place to store the handlers for this event type
-    handlers = data.events[type];
-
-    // If no handlers exist, nothing to unbind
-    if (!handlers) { return; }
-
-    // See if we're only removing a single handler
-    if (fn && fn.guid) {
-      for (var i = 0; i < handlers.length; i++) {
-        // We found a match (don't stop here, there could be a couple bound)
-        if (handlers[i].guid === fn.guid) {
-          // Remove the handler from the array of handlers
-          handlers.splice(i--, 1);
-        }
-      }
-    }
-
-    _V_.cleanUpEvents(elem, type);
-  },
-
-  cleanUpEvents: function(elem, type) {
-    var data = _V_.getData(elem);
-    // Remove the events of a particular type if there are none left
-
-    if (data.events[type].length === 0) {
-      delete data.events[type];
-
-      // Remove the meta-handler from the element
-      if (document.removeEventListener) {
-        elem.removeEventListener(type, data.handler, false);
-      } else if (document.detachEvent) {
-        elem.detachEvent("on" + type, data.handler);
-      }
-    }
-
-    // Remove the events object if there are no types left
-    if (_V_.isEmpty(data.events)) {
-      delete data.events;
-      delete data.handler;
-    }
-
-    // Finally remove the expando if there is no data left
-    if (_V_.isEmpty(data)) {
-      _V_.removeData(elem);
-    }
-  },
-
-  fixEvent: function(event) {
-    if (event[_V_.expando]) { return event; }
-    // store a copy of the original event object
-    // and "clone" to set read-only properties
-    var originalEvent = event;
-    event = new _V_.Event(originalEvent);
-
-    for ( var i = _V_.Event.props.length, prop; i; ) {
-      prop = _V_.Event.props[ --i ];
-      event[prop] = originalEvent[prop];
-    }
-
-    // Fix target property, if necessary
-    if (!event.target) { event.target = event.srcElement || document; }
-
-    // check if target is a textnode (safari)
-    if (event.target.nodeType === 3) { event.target = event.target.parentNode; }
-
-    // Add relatedTarget, if necessary
-    if (!event.relatedTarget && event.fromElement) {
-      event.relatedTarget = event.fromElement === event.target ? event.toElement : event.fromElement;
-    }
-
-    // Calculate pageX/Y if missing and clientX/Y available
-    if ( event.pageX == null && event.clientX != null ) {
-      var eventDocument = event.target.ownerDocument || document,
-        doc = eventDocument.documentElement,
-        body = eventDocument.body;
-
-      event.pageX = event.clientX + (doc && doc.scrollLeft || body && body.scrollLeft || 0) - (doc && doc.clientLeft || body && body.clientLeft || 0);
-      event.pageY = event.clientY + (doc && doc.scrollTop  || body && body.scrollTop  || 0) - (doc && doc.clientTop  || body && body.clientTop  || 0);
-    }
-
-    // Add which for key events
-    if (event.which == null && (event.charCode != null || event.keyCode != null)) {
-      event.which = event.charCode != null ? event.charCode : event.keyCode;
-    }
-
-    // Add metaKey to non-Mac browsers (use ctrl for PC's and Meta for Macs)
-    if ( !event.metaKey && event.ctrlKey ) {
-      event.metaKey = event.ctrlKey;
-    }
-
-    // Add which for click: 1 === left; 2 === middle; 3 === right
-    // Note: button is not normalized, so don't use it
-    if ( !event.which && event.button !== undefined ) {
-      event.which = (event.button & 1 ? 1 : ( event.button & 2 ? 3 : ( event.button & 4 ? 2 : 0 ) ));
-    }
-
-    return event;
-  },
-
-  triggerEvent: function(elem, event) {
-    var data = _V_.getData(elem),
-        parent = elem.parentNode || elem.ownerDocument,
-        type = event.type || event,
-        handler;
-
-    if (data) { handler = data.handler }
-
-    // Added in attion to book. Book code was broke.
-    event = typeof event === "object" ?
-      event[_V_.expando] ? 
-        event :
-        new _V_.Event(type, event) :
-      new _V_.Event(type);
-
-    event.type = type;
-    if (handler) {
-      handler.call(elem, event);
-    }
-
-    // Clean up the event in case it is being reused
-    event.result = undefined;
-    event.target = elem;
-
-    // Bubble the event up the tree to the document,
-    // Unless it's been explicitly stopped
-    // if (parent && !event.isPropagationStopped()) {
-    //   _V_.triggerEvent(parent, event);
-    // 
-    // // We're at the top document so trigger the default action
-    // } else if (!parent && !event.isDefaultPrevented()) {
-    //   // log(type);
-    //   var targetData = _V_.getData(event.target);
-    //   // log(targetData);
-    //   var targetHandler = targetData.handler;
-    //   // log("2");
-    //   if (event.target[event.type]) {
-    //     // Temporarily disable the bound handler,
-    //     // don't want to execute it twice
-    //     if (targetHandler) {
-    //       targetData.handler = function(){};
-    //     }
-    // 
-    //     // Trigger the native event (click, focus, blur)
-    //     event.target[event.type]();
-    // 
-    //     // Restore the handler
-    //     if (targetHandler) {
-    //       targetData.handler = targetHandler;
-    //     }
-    //   }
-    // }
-  },
-  
-  one: function(elem, type, fn) {
-    _V_.addEvent(elem, type, function(){
-      _V_.removeEvent(elem, type, arguments.callee)
-      fn.apply(this, arguments);
-    });
-  }
-});
-
-// Custom Event object for standardizing event objects between browsers.
-_V_.Event = function(src, props){
-  // Event object
-  if (src && src.type) {
-    this.originalEvent = src;
-    this.type = src.type;
-
-    // Events bubbling up the document may have been marked as prevented
-    // by a handler lower down the tree; reflect the correct value.
-    this.isDefaultPrevented = (src.defaultPrevented || src.returnValue === false ||
-      src.getPreventDefault && src.getPreventDefault()) ? returnTrue : returnFalse;
-
-  // Event type
-  } else {
-    this.type = src;
-  }
-
-  // Put explicitly provided properties onto the event object
-  if (props) { _V_.merge(this, props); }
-
-  this.timeStamp = (new Date).getTime();
-
-  // Mark it as fixed
-  this[_V_.expando] = true;
-};
-
-_V_.Event.prototype = {
-  preventDefault: function() {
-    this.isDefaultPrevented = returnTrue;
-
-    var e = this.originalEvent;
-    if (!e) { return; }
-
-    // if preventDefault exists run it on the original event
-    if (e.preventDefault) { 
-      e.preventDefault();
-    // otherwise set the returnValue property of the original event to false (IE)
-    } else {
-      e.returnValue = false;
-    }
-  },
-  stopPropagation: function() {
-    this.isPropagationStopped = returnTrue;
-
-    var e = this.originalEvent;
-    if (!e) { return; }
-    // if stopPropagation exists run it on the original event
-    if (e.stopPropagation) { e.stopPropagation(); }
-    // otherwise set the cancelBubble property of the original event to true (IE)
-    e.cancelBubble = true;
-  },
-  stopImmediatePropagation: function() {
-    this.isImmediatePropagationStopped = returnTrue;
-    this.stopPropagation();
-  },
-  isDefaultPrevented: returnFalse,
-  isPropagationStopped: returnFalse,
-  isImmediatePropagationStopped: returnFalse
-};
-_V_.Event.props = "altKey attrChange attrName bubbles button cancelable charCode clientX clientY ctrlKey currentTarget data detail eventPhase fromElement handler keyCode metaKey newValue offsetX offsetY pageX pageY prevValue relatedNode relatedTarget screenX screenY shiftKey srcElement target toElement view wheelDelta which".split(" ");
-
-function returnTrue(){ return true; }
-function returnFalse(){ return false; }
-
-// Javascript JSON implementation
-// (Parse Method Only)
-// https://github.com/douglascrockford/JSON-js/blob/master/json2.js
-
-var JSON;
-if (!JSON) { JSON = {}; }
-
-(function(){
-  var cx = /[\u0000\u00ad\u0600-\u0604\u070f\u17b4\u17b5\u200c-\u200f\u2028-\u202f\u2060-\u206f\ufeff\ufff0-\uffff]/g;
-
-  if (typeof JSON.parse !== 'function') {
-      JSON.parse = function (text, reviver) {
-          var j;
-
-          function walk(holder, key) {
-              var k, v, value = holder[key];
-              if (value && typeof value === 'object') {
-                  for (k in value) {
-                      if (Object.prototype.hasOwnProperty.call(value, k)) {
-                          v = walk(value, k);
-                          if (v !== undefined) {
-                              value[k] = v;
-                          } else {
-                              delete value[k];
-                          }
-                      }
-                  }
-              }
-              return reviver.call(holder, key, value);
-          }
-          text = String(text);
-          cx.lastIndex = 0;
-          if (cx.test(text)) {
-              text = text.replace(cx, function (a) {
-                  return '\\u' +
-                      ('0000' + a.charCodeAt(0).toString(16)).slice(-4);
-              });
-          }
-
-          if (/^[\],:{}\s]*$/
-                  .test(text.replace(/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g, '@')
-                      .replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, ']')
-                      .replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
-
-              j = eval('(' + text + ')');
-
-              return typeof reviver === 'function' ?
-                  walk({'': j}, '') : j;
-          }
-
-          throw new SyntaxError('JSON.parse');
-      };
-  }
-}());
-/* UI Component- Base class for all UI objects
+});/* UI Component- Base class for all UI objects
 ================================================================================ */
 _V_.Player = _V_.Component.extend({
 
@@ -2145,48 +1094,15 @@ _V_.Player = _V_.Component.extend({
     this.tag = tag; // Store the original tag used to set options
 
     var el = this.el = _V_.createElement("div"), // Div to contain video and controls
-        options = this.options = {},
-        width = options.width = tag.getAttribute('width'),
-        height = options.height = tag.getAttribute('height'),
-
-        // Browsers default to 300x150 if there's no width/height or video size data.
-        initWidth = width || 300,
-        initHeight = height || 150;
-
-    // Make player findable on elements
-    tag.player = el.player = this;
-
-    // Add callback to ready queue
-    this.ready(ready);
-
-    // Wrap video tag in div (el/box) container
-    tag.parentNode.insertBefore(el, tag);
-    el.appendChild(tag); // Breaks iPhone, fixed in HTML5 setup.
-
-    // Give video tag properties to box
-    el.id = this.id = tag.id; // ID will now reference box, not the video tag
-    el.className = tag.className;
-    // Update tag id/class for use as HTML5 playback tech
-    tag.id += "_html5_api";
-    tag.className = "vjs-tech";
-
-    // Make player easily findable by ID
-    _V_.players[el.id] = this;
-
-    // Make box use width/height of tag, or default 300x150
-    el.setAttribute("width", initWidth);
-    el.setAttribute("height", initHeight);
-    // Enforce with CSS since width/height attrs don't work on divs
-    el.style.width = initWidth+"px";
-    el.style.height = initHeight+"px";
-    // Remove width/height attrs from tag so CSS can make it 100% width/height
-    tag.removeAttribute("width");
-    tag.removeAttribute("height");
+        options = this.options = {};
 
     // Set Options
     _V_.merge(options, _V_.options); // Copy Global Defaults
     _V_.merge(options, this.getVideoTagSettings()); // Override with Video Tag Options
     _V_.merge(options, addOptions); // Override/extend with options from setup call
+
+    // Add callback to ready queue
+    this.ready(ready);
 
     // Store controls setting, and then remove immediately so native controls don't flash.
     tag.removeAttribute("controls");
@@ -2194,7 +1110,40 @@ _V_.Player = _V_.Component.extend({
     // Poster will be handled by a manual <img>
     tag.removeAttribute("poster");
 
-    // Empty video tag sources and tracks so the built in player doesn't use them also.
+    // Make player findable on elements
+    tag.player = el.player = this;
+
+    // Make sure tag ID exists
+    tag.id = tag.id || "vjs_video_" + _V_.guid++;
+
+    // Give video tag properties to box
+    // ID will now reference box, not the video tag
+    this.id = el.id = tag.id;
+    el.className = tag.className;
+
+    // Make player easily findable by ID
+    _V_.players[el.id] = this;
+
+    // Make box use width/height of tag, or default 300x150
+    // Enforce with CSS since width/height attrs don't work on divs
+    this.width(options.width, true); // (true) Skip resize listener on load
+    this.height(options.height, true);
+
+    // Update tag id/class for use as HTML5 playback tech
+    // Might think we should do this after embedding in container so .vjs-tech class 
+    // doesn't flash 100% width/height, but class only applies with .video-js parent
+    tag.id += "_html5_api";
+    tag.className = "vjs-tech";
+
+    // Remove width/height attrs from tag so CSS can make it 100% width/height
+    tag.removeAttribute("width");
+    tag.removeAttribute("height");
+
+    // Wrap video tag in div (el/box) container
+    tag.parentNode.insertBefore(el, tag);
+    el.appendChild(tag); // Breaks iPhone, fixed in HTML5 setup.
+
+    // Empty video tag sources and tracks so the built-in player doesn't use them also.
     if (tag.hasChildNodes()) {
       var nrOfChildNodes = tag.childNodes.length;
       for (var i=0,j=tag.childNodes;i<nrOfChildNodes;i++) {
@@ -2209,11 +1158,12 @@ _V_.Player = _V_.Component.extend({
 
     this.addClass("vjs-paused");
 
-    this.addEvent("ended", this.onEnded);
-    this.addEvent("play", this.onPlay);
-    this.addEvent("pause", this.onPause);
-    this.addEvent("progress", this.onProgress);
-    this.addEvent("error", this.onError);
+    this.on("ended", this.onEnded);
+    this.on("play", this.onPlay);
+    this.on("pause", this.onPause);
+    this.on("progress", this.onProgress);
+    this.on("durationchange", this.onDurationChange);
+    this.on("error", this.onError);
 
     // When the API is ready, loop through the components and add to the player.
     if (options.controls) {
@@ -2249,9 +1199,6 @@ _V_.Player = _V_.Component.extend({
     }
   },
 
-  // Cache for video property values.
-  values: {},
-
   destroy: function(){
     // Ensure that tracking progress and time progress will stop and plater deleted
     this.stopTrackingProgress();
@@ -2268,35 +1215,40 @@ _V_.Player = _V_.Component.extend({
     var options = {
       sources: [],
       tracks: []
-    };
+    },
+    tag = this.tag,
+    getAttribute = "getAttribute"; // For better minification
 
-    options.src = this.tag.getAttribute("src");
-    options.controls = this.tag.getAttribute("controls") !== null;
-    options.poster = this.tag.getAttribute("poster");
-    options.preload = this.tag.getAttribute("preload");
-    options.autoplay = this.tag.getAttribute("autoplay") !== null; // hasAttribute not IE <8 compatible
-    options.loop = this.tag.getAttribute("loop") !== null;
-    options.muted = this.tag.getAttribute("muted") !== null;
+    options.src = tag[getAttribute]("src");
+    options.controls = tag[getAttribute]("controls") !== null;
+    options.poster = tag[getAttribute]("poster");
+    options.preload = tag[getAttribute]("preload");
+    options.autoplay = tag[getAttribute]("autoplay") !== null; // hasAttribute not IE <8 compatible
+    options.loop = tag[getAttribute]("loop") !== null;
+    options.muted = tag[getAttribute]("muted") !== null;
+    
+    options.width = tag[getAttribute]("width");
+    options.height = tag[getAttribute]("height");
 
     if (this.tag.hasChildNodes()) {
       for (var c,i=0,j=this.tag.childNodes;i<j.length;i++) {
         c = j[i];
         if (c.nodeName.toLowerCase() == "source") {
           options.sources.push({
-            src: c.getAttribute('src'),
-            type: c.getAttribute('type'),
-            media: c.getAttribute('media'),
-            title: c.getAttribute('title')
+            src: c[getAttribute]('src'),
+            type: c[getAttribute]('type'),
+            media: c[getAttribute]('media'),
+            title: c[getAttribute]('title')
           });
         }
         if (c.nodeName.toLowerCase() == "track") {
           options.tracks.push({
-            src: c.getAttribute("src"),
-            kind: c.getAttribute("kind"),
-            srclang: c.getAttribute("srclang"),
-            label: c.getAttribute("label"),
-            'default': c.getAttribute("default") !== null,
-            title: c.getAttribute("title")
+            src: c[getAttribute]("src"),
+            kind: c[getAttribute]("kind"),
+            srclang: c[getAttribute]("srclang"),
+            label: c[getAttribute]("label"),
+            'default': c[getAttribute]("default") !== null,
+            title: c[getAttribute]("title")
           });
         }
       }
@@ -2394,7 +1346,7 @@ _V_.Player = _V_.Component.extend({
     // Watch for a native progress event call on the tech element
     // In HTML5, some older versions don't support the progress event
     // So we're assuming they don't, and turning off manual progress if they do.
-    this.tech.addEvent("progress", function(){
+    this.tech.on("progress", function(){
 
       // Remove this listener from the element
       this.removeEvent("progress", arguments.callee);
@@ -2418,10 +1370,10 @@ _V_.Player = _V_.Component.extend({
       // log(this.values.bufferEnd, this.buffered().end(0), this.duration())
       /* TODO: update for multiple buffered regions */
       if (this.values.bufferEnd < this.buffered().end(0)) {
-        this.triggerEvent("progress");
+        this.trigger("progress");
       } else if (this.bufferedPercent() == 1) {
         this.stopTrackingProgress();
-        this.triggerEvent("progress"); // Last update
+        this.trigger("progress"); // Last update
       }
     }), 500);
   },
@@ -2431,12 +1383,12 @@ _V_.Player = _V_.Component.extend({
   manualTimeUpdatesOn: function(){
     this.manualTimeUpdates = true;
 
-    this.addEvent("play", this.trackCurrentTime);
-    this.addEvent("pause", this.stopTrackingCurrentTime);
+    this.on("play", this.trackCurrentTime);
+    this.on("pause", this.stopTrackingCurrentTime);
     // timeupdate is also called by .currentTime whenever current time is set
 
     // Watch for native timeupdate event
-    this.tech.addEvent("timeupdate", function(){
+    this.tech.on("timeupdate", function(){
 
       // Remove this listener from the element
       this.removeEvent("timeupdate", arguments.callee);
@@ -2459,7 +1411,7 @@ _V_.Player = _V_.Component.extend({
   trackCurrentTime: function(){
     if (this.currentTimeInterval) { this.stopTrackingCurrentTime(); }
     this.currentTimeInterval = setInterval(_V_.proxy(this, function(){
-      this.triggerEvent("timeupdate");
+      this.trigger("timeupdate");
     }), 250); // 42 = 24 fps // 250 is what Webkit uses // FF uses 15
   },
 
@@ -2473,8 +1425,6 @@ _V_.Player = _V_.Component.extend({
       this.currentTime(0);
       this.play();
     } else {
-      this.pause();
-      this.currentTime(0);
       this.pause();
     }
   },
@@ -2492,8 +1442,14 @@ _V_.Player = _V_.Component.extend({
   onProgress: function(){
     // Add custom event for when source is finished downloading.
     if (this.bufferedPercent() == 1) {
-      this.triggerEvent("loadedalldata");
+      this.trigger("loadedalldata");
     }
+  },
+
+  // Update duration with durationchange event
+  // Allows for cacheing value instead of asking player each time.
+  onDurationChange: function(){
+    this.duration(this.techGet("duration"));
   },
 
   onError: function(e) {
@@ -2596,7 +1552,7 @@ _V_.Player = _V_.Component.extend({
       this.techCall("setCurrentTime", seconds);
 
       // Improve the accuracy of manual timeupdates
-      if (this.manualTimeUpdates) { this.triggerEvent("timeupdate"); }
+      if (this.manualTimeUpdates) { this.trigger("timeupdate"); }
 
       return this;
     }
@@ -2608,8 +1564,16 @@ _V_.Player = _V_.Component.extend({
 
   // http://dev.w3.org/html5/spec/video.html#dom-media-duration
   // Duration should return NaN if not available. ParseFloat will turn false-ish values to NaN.
-  duration: function(){
-    return parseFloat(this.techGet("duration"));
+  duration: function(seconds){
+    if (seconds !== undefined) {
+
+      // Cache the last set value for optimiized scrubbing (esp. Flash)
+      this.values.duration = parseFloat(seconds);
+
+      return this;
+    }
+
+    return this.values.duration;
   },
 
   // Calculates how much time is left. Not in spec, but useful.
@@ -2668,31 +1632,39 @@ _V_.Player = _V_.Component.extend({
 
   // http://dev.w3.org/html5/spec/dimension-attributes.html#attr-dim-height
   // Video tag width/height only work in pixels. No percents.
-  // We could potentially allow percents but won't for now until we can do testing around it.
-  width: function(width, skipListeners){
-    if (width !== undefined) {
-      this.el.width = width;
-      this.el.style.width = width+"px";
-
-      // skipListeners allows us to avoid triggering the resize event when setting both width and height
-      if (!skipListeners) { this.triggerEvent("resize"); }
-      return this;
-    }
-    return parseInt(this.el.getAttribute("width"));
+  // But allowing limited percents use. e.g. width() will return number+%, not computed width
+  width: function(num, skipListeners){
+    return this.dimension("width", num, skipListeners);
   },
-  height: function(height){
-    if (height !== undefined) {
-      this.el.height = height;
-      this.el.style.height = height+"px";
-      this.triggerEvent("resize");
-      return this;
-    }
-    return parseInt(this.el.getAttribute("height"));
+  height: function(num, skipListeners){
+    return this.dimension("height", num, skipListeners);
   },
   // Set both width and height at the same time.
   size: function(width, height){
     // Skip resize listeners on width for optimization
     return this.width(width, true).height(height);
+  },
+  dimension: function(widthOrHeight, num, skipListeners){
+    if (num !== undefined) {
+
+      // Cache on object to be returned. Shouldn't have any effect after CSS.
+      this.el[widthOrHeight] = num;
+
+      // Check if using percent width/height and adjust
+      if ((""+num).indexOf("%") !== -1) {
+        this.el.style[widthOrHeight] = num;
+      } else {
+        this.el.style[widthOrHeight] = num+"px";
+      }
+
+      // skipListeners allows us to avoid triggering the resize event when setting both width and height
+      if (!skipListeners) { this.trigger("resize"); }
+      return this;
+    }
+
+    // Returns cached width/height in attribute.
+    // Could make this return computed width and support %s. Not a small amount of work.
+    return parseInt(this.el.getAttribute(widthOrHeight));
   },
 
   // Check if current tech can support native fullscreen (e.g. with built in controls lik iOS, so not our flash swf)
@@ -2708,7 +1680,7 @@ _V_.Player = _V_.Component.extend({
     if (requestFullScreen) {
 
       // Trigger fullscreenchange event after change
-      _V_.addEvent(document, requestFullScreen.eventName, this.proxy(function(){
+      _V_.on(document, requestFullScreen.eventName, this.proxy(function(){
         this.isFullScreen = document[requestFullScreen.isFullScreen];
 
         // If cancelling fullscreen, remove event listener.
@@ -2716,7 +1688,7 @@ _V_.Player = _V_.Component.extend({
           _V_.removeEvent(document, requestFullScreen.eventName, arguments.callee);
         }
 
-        this.triggerEvent("fullscreenchange");
+        this.trigger("fullscreenchange");
       }));
 
       // Flash and other plugins get reloaded when you take their parent to fullscreen.
@@ -2726,7 +1698,7 @@ _V_.Player = _V_.Component.extend({
         this.pause();
         this.unloadTech();
 
-        _V_.addEvent(document, requestFullScreen.eventName, this.proxy(function(){
+        _V_.on(document, requestFullScreen.eventName, this.proxy(function(){
           _V_.removeEvent(document, requestFullScreen.eventName, arguments.callee);
           this.loadTech(this.techName, { src: this.values.src });
         }));
@@ -2738,11 +1710,11 @@ _V_.Player = _V_.Component.extend({
       }
 
     } else if (this.tech.supportsFullScreen()) {
-      this.triggerEvent("fullscreenchange");
+      this.trigger("fullscreenchange");
       this.techCall("enterFullScreen");
 
     } else {
-      this.triggerEvent("fullscreenchange");
+      this.trigger("fullscreenchange");
       this.enterFullWindow();
     }
 
@@ -2764,7 +1736,7 @@ _V_.Player = _V_.Component.extend({
        this.pause();
        this.unloadTech();
 
-       _V_.addEvent(document, requestFullScreen.eventName, this.proxy(function(){
+       _V_.on(document, requestFullScreen.eventName, this.proxy(function(){
          _V_.removeEvent(document, requestFullScreen.eventName, arguments.callee);
          this.loadTech(this.techName, { src: this.values.src })
        }));
@@ -2777,11 +1749,11 @@ _V_.Player = _V_.Component.extend({
 
     } else if (this.tech.supportsFullScreen()) {
      this.techCall("exitFullScreen");
-     this.triggerEvent("fullscreenchange");
+     this.trigger("fullscreenchange");
 
     } else {
      this.exitFullWindow();
-     this.triggerEvent("fullscreenchange");
+     this.trigger("fullscreenchange");
     }
 
     return this;
@@ -2795,7 +1767,7 @@ _V_.Player = _V_.Component.extend({
     this.docOrigOverflow = document.documentElement.style.overflow;
 
     // Add listener for esc key to exit fullscreen
-    _V_.addEvent(document, "keydown", _V_.proxy(this, this.fullWindowOnEscKey));
+    _V_.on(document, "keydown", _V_.proxy(this, this.fullWindowOnEscKey));
 
     // Hide any scroll bars
     document.documentElement.style.overflow = 'hidden';
@@ -2804,7 +1776,7 @@ _V_.Player = _V_.Component.extend({
     _V_.addClass(document.body, "vjs-full-window");
     _V_.addClass(this.el, "vjs-fullscreen");
 
-    this.triggerEvent("enterFullWindow");
+    this.trigger("enterFullWindow");
   },
   fullWindowOnEscKey: function(event){
     if (event.keyCode == 27) {
@@ -2829,7 +1801,7 @@ _V_.Player = _V_.Component.extend({
 
     // Resize the box, controller, and poster to original sizes
     // this.positionAll();
-    this.triggerEvent("exitFullWindow");
+    this.trigger("exitFullWindow");
   },
 
   selectSource: function(sources){
@@ -3202,6 +2174,16 @@ _V_.html5 = _V_.PlaybackTech.extend({
   enterFullScreen: function(){
       try {
         this.el.webkitEnterFullScreen();
+      } catch (e) {
+        if (e.code == 11) {
+          // this.warning(VideoJS.warnings.videoNotReady);
+          _V_.log("VideoJS: Video not ready.")
+        }
+      }
+  },
+  exitFullScreen: function(){
+      try {
+        this.el.webkitExitFullScreen();
       } catch (e) {
         if (e.code == 11) {
           // this.warning(VideoJS.warnings.videoNotReady);
@@ -3728,7 +2710,852 @@ _V_.flash.getEmbedCode = function(swf, flashVars, params, attributes){
 
   return objTag + attrsString + '>' + paramsString + '</object>';
 }
-// TEXT TRACKS
+/* Control - Base class for all control elements
+================================================================================ */
+_V_.Control = _V_.Component.extend({
+
+  buildCSSClass: function(){
+    return "vjs-control " + this._super();
+  }
+
+});
+
+/* Control Bar
+================================================================================ */
+_V_.ControlBar = _V_.Component.extend({
+
+  options: {
+    loadEvent: "play",
+    components: {
+      "playToggle": {},
+      "fullscreenToggle": {},
+      "currentTimeDisplay": {},
+      "timeDivider": {},
+      "durationDisplay": {},
+      "remainingTimeDisplay": {},
+      "progressControl": {},
+      "volumeControl": {},
+      "muteToggle": {}
+    }
+  },
+
+  init: function(player, options){
+    this._super(player, options);
+
+    player.one("play", this.proxy(function(){
+      this.fadeIn();
+      this.player.on("mouseover", this.proxy(this.fadeIn));
+      this.player.on("mouseout", this.proxy(this.fadeOut));
+    }));
+
+  },
+
+  createElement: function(){
+    return _V_.createElement("div", {
+      className: "vjs-controls"
+    });
+  },
+
+  fadeIn: function(){
+    this._super();
+    this.player.trigger("controlsvisible");
+  },
+
+  fadeOut: function(){
+    this._super();
+    this.player.trigger("controlshidden");
+  },
+
+  lockShowing: function(){
+    this.el.style.opacity = "1";
+  }
+
+});
+
+/* Button - Base class for all buttons
+================================================================================ */
+_V_.Button = _V_.Control.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+
+    this.on("click", this.onClick);
+    this.on("focus", this.onFocus);
+    this.on("blur", this.onBlur);
+  },
+
+  createElement: function(type, attrs){
+    // Add standard Aria and Tabindex info
+    attrs = _V_.merge({
+      className: this.buildCSSClass(),
+      innerHTML: '<div><span class="vjs-control-text">' + (this.buttonText || "Need Text") + '</span></div>',
+      role: "button",
+      tabIndex: 0
+    }, attrs);
+
+    return this._super(type, attrs);
+  },
+
+  // Click - Override with specific functionality for button
+  onClick: function(){},
+
+  // Focus - Add keyboard functionality to element
+  onFocus: function(){
+    _V_.on(document, "keyup", _V_.proxy(this, this.onKeyPress));
+  },
+
+  // KeyPress (document level) - Trigger click when keys are pressed
+  onKeyPress: function(event){
+    // Check for space bar (32) or enter (13) keys
+    if (event.which == 32 || event.which == 13) {
+      event.preventDefault();
+      this.onClick();
+    }
+  },
+
+  // Blur - Remove keyboard triggers
+  onBlur: function(){
+    _V_.off(document, "keyup", _V_.proxy(this, this.onKeyPress));
+  }
+
+});
+
+/* Play Button
+================================================================================ */
+_V_.PlayButton = _V_.Button.extend({
+
+  buttonText: "Play",
+
+  buildCSSClass: function(){
+    return "vjs-play-button " + this._super();
+  },
+
+  onClick: function(){
+    this.player.play();
+  }
+
+});
+
+/* Pause Button
+================================================================================ */
+_V_.PauseButton = _V_.Button.extend({
+
+  buttonText: "Pause",
+
+  buildCSSClass: function(){
+    return "vjs-pause-button " + this._super();
+  },
+
+  onClick: function(){
+    this.player.pause();
+  }
+
+});
+
+/* Play Toggle - Play or Pause Media
+================================================================================ */
+_V_.PlayToggle = _V_.Button.extend({
+
+  buttonText: "Play",
+
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on("play", _V_.proxy(this, this.onPlay));
+    player.on("pause", _V_.proxy(this, this.onPause));
+  },
+
+  buildCSSClass: function(){
+    return "vjs-play-control " + this._super();
+  },
+
+  // OnClick - Toggle between play and pause
+  onClick: function(){
+    if (this.player.paused()) {
+      this.player.play();
+    } else {
+      this.player.pause();
+    }
+  },
+
+  // OnPlay - Add the vjs-playing class to the element so it can change appearance
+  onPlay: function(){
+    _V_.removeClass(this.el, "vjs-paused");
+    _V_.addClass(this.el, "vjs-playing");
+  },
+
+  // OnPause - Add the vjs-paused class to the element so it can change appearance
+  onPause: function(){
+    _V_.removeClass(this.el, "vjs-playing");
+    _V_.addClass(this.el, "vjs-paused");
+  }
+
+});
+
+
+/* Fullscreen Toggle Behaviors
+================================================================================ */
+_V_.FullscreenToggle = _V_.Button.extend({
+
+  buttonText: "Fullscreen",
+
+  buildCSSClass: function(){
+    return "vjs-fullscreen-control " + this._super();
+  },
+
+  onClick: function(){
+    if (!this.player.isFullScreen) {
+      this.player.requestFullScreen();
+    } else {
+      this.player.cancelFullScreen();
+    }
+  }
+
+});
+
+/* Big Play Button
+================================================================================ */
+_V_.BigPlayButton = _V_.Button.extend({
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on("play", _V_.proxy(this, this.hide));
+    player.on("ended", _V_.proxy(this, this.show));
+  },
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-big-play-button",
+      innerHTML: "<span></span>"
+    });
+  },
+
+  onClick: function(){
+    // Go back to the beginning if big play button is showing at the end.
+    // Have to check for current time otherwise it might throw a 'not ready' error.
+    if(this.player.currentTime()) {
+      this.player.currentTime(0);
+    }
+    this.player.play();
+  }
+});
+
+/* Loading Spinner
+================================================================================ */
+_V_.LoadingSpinner = _V_.Component.extend({
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on("canplay", _V_.proxy(this, this.hide));
+    player.on("canplaythrough", _V_.proxy(this, this.hide));
+    player.on("playing", _V_.proxy(this, this.hide));
+
+    player.on("seeking", _V_.proxy(this, this.show));
+    player.on("error", _V_.proxy(this, this.show));
+
+    // Not showing spinner on stalled any more. Browsers may stall and then not trigger any events that would remove the spinner.
+    // Checked in Chrome 16 and Safari 5.1.2. http://help.videojs.com/discussions/problems/883-why-is-the-download-progress-showing
+    // player.on("stalled", _V_.proxy(this, this.show));
+
+    player.on("waiting", _V_.proxy(this, this.show));
+  },
+
+  createElement: function(){
+
+    var classNameSpinner, innerHtmlSpinner;
+
+    if ( typeof this.player.el.style.WebkitBorderRadius == "string"
+         || typeof this.player.el.style.MozBorderRadius == "string"
+         || typeof this.player.el.style.KhtmlBorderRadius == "string"
+         || typeof this.player.el.style.borderRadius == "string")
+      {
+        classNameSpinner = "vjs-loading-spinner";
+        innerHtmlSpinner = "<div class='ball1'></div><div class='ball2'></div><div class='ball3'></div><div class='ball4'></div><div class='ball5'></div><div class='ball6'></div><div class='ball7'></div><div class='ball8'></div>";
+      } else {
+        classNameSpinner = "vjs-loading-spinner-fallback";
+        innerHtmlSpinner = "";
+      }
+
+    return this._super("div", {
+      className: classNameSpinner,
+      innerHTML: innerHtmlSpinner
+    });
+  }
+});
+
+/* Time
+================================================================================ */
+_V_.CurrentTimeDisplay = _V_.Component.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on("timeupdate", _V_.proxy(this, this.updateContent));
+  },
+
+  createElement: function(){
+    var el = this._super("div", {
+      className: "vjs-current-time vjs-time-controls vjs-control"
+    });
+
+    this.content = _V_.createElement("div", {
+      className: "vjs-current-time-display",
+      innerHTML: '0:00'
+    });
+
+    el.appendChild(_V_.createElement("div").appendChild(this.content));
+    return el;
+  },
+
+  updateContent: function(){
+    // Allows for smooth scrubbing, when player can't keep up.
+    var time = (this.player.scrubbing) ? this.player.values.currentTime : this.player.currentTime();
+    this.content.innerHTML = _V_.formatTime(time, this.player.duration());
+  }
+
+});
+
+_V_.DurationDisplay = _V_.Component.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on("timeupdate", _V_.proxy(this, this.updateContent));
+  },
+
+  createElement: function(){
+    var el = this._super("div", {
+      className: "vjs-duration vjs-time-controls vjs-control"
+    });
+
+    this.content = _V_.createElement("div", {
+      className: "vjs-duration-display",
+      innerHTML: '0:00'
+    });
+
+    el.appendChild(_V_.createElement("div").appendChild(this.content));
+    return el;
+  },
+
+  updateContent: function(){
+    if (this.player.duration()) { this.content.innerHTML = _V_.formatTime(this.player.duration()); }
+  }
+
+});
+
+// Time Separator (Not used in main skin, but still available, and could be used as a 'spare element')
+_V_.TimeDivider = _V_.Component.extend({
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-time-divider",
+      innerHTML: '<div><span>/</span></div>'
+    });
+  }
+
+});
+
+_V_.RemainingTimeDisplay = _V_.Component.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on("timeupdate", _V_.proxy(this, this.updateContent));
+  },
+
+  createElement: function(){
+    var el = this._super("div", {
+      className: "vjs-remaining-time vjs-time-controls vjs-control"
+    });
+
+    this.content = _V_.createElement("div", {
+      className: "vjs-remaining-time-display",
+      innerHTML: '-0:00'
+    });
+
+    el.appendChild(_V_.createElement("div").appendChild(this.content));
+    return el;
+  },
+
+  updateContent: function(){
+    if (this.player.duration()) { this.content.innerHTML = "-"+_V_.formatTime(this.player.remainingTime()); }
+
+    // Allows for smooth scrubbing, when player can't keep up.
+    // var time = (this.player.scrubbing) ? this.player.values.currentTime : this.player.currentTime();
+    // this.content.innerHTML = _V_.formatTime(time, this.player.duration());
+  }
+
+});
+
+/* Slider - Parent for seek bar and volume slider
+================================================================================ */
+_V_.Slider = _V_.Component.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on(this.playerEvent, _V_.proxy(this, this.update));
+
+    this.on("mousedown", this.onMouseDown);
+    this.on("focus", this.onFocus);
+    this.on("blur", this.onBlur);
+
+    this.player.on("controlsvisible", this.proxy(this.update));
+
+    // This is actually to fix the volume handle position. http://twitter.com/#!/gerritvanaaken/status/159046254519787520
+    // this.player.one("timeupdate", this.proxy(this.update));
+
+    this.update();
+  },
+
+  createElement: function(type, attrs) {
+    attrs = _V_.merge({
+      role: "slider",
+      "aria-valuenow": 0,
+      "aria-valuemin": 0,
+      "aria-valuemax": 100,
+      tabIndex: 0
+    }, attrs);
+
+    return this._super(type, attrs);
+  },
+
+  onMouseDown: function(event){
+    event.preventDefault();
+    _V_.blockTextSelection();
+
+    _V_.on(document, "mousemove", _V_.proxy(this, this.onMouseMove));
+    _V_.on(document, "mouseup", _V_.proxy(this, this.onMouseUp));
+
+    this.onMouseMove(event);
+  },
+
+  onMouseUp: function(event) {
+    _V_.unblockTextSelection();
+    _V_.off(document, "mousemove", this.onMouseMove, false);
+    _V_.off(document, "mouseup", this.onMouseUp, false);
+
+    this.update();
+  },
+
+  update: function(){
+    // If scrubbing, we could use a cached value to make the handle keep up with the user's mouse.
+    // On HTML5 browsers scrubbing is really smooth, but some flash players are slow, so we might want to utilize this later.
+    // var progress =  (this.player.scrubbing) ? this.player.values.currentTime / this.player.duration() : this.player.currentTime() / this.player.duration();
+
+    var barProgress,
+        progress = this.getPercent();
+        handle = this.handle,
+        bar = this.bar;
+
+    // Protect against no duration and other division issues
+    if (isNaN(progress)) { progress = 0; }
+
+    barProgress = progress;
+
+    // If there is a handle, we need to account for the handle in our calculation for progress bar
+    // so that it doesn't fall short of or extend past the handle.
+    if (handle) {
+
+      var box = this.el,
+          boxWidth = box.offsetWidth,
+
+          handleWidth = handle.el.offsetWidth,
+
+          // The width of the handle in percent of the containing box
+          // In IE, widths may not be ready yet causing NaN
+          handlePercent = (handleWidth) ? handleWidth / boxWidth : 0,
+
+          // Get the adjusted size of the box, considering that the handle's center never touches the left or right side.
+          // There is a margin of half the handle's width on both sides.
+          boxAdjustedPercent = 1 - handlePercent;
+
+          // Adjust the progress that we'll use to set widths to the new adjusted box width
+          adjustedProgress = progress * boxAdjustedPercent,
+
+          // The bar does reach the left side, so we need to account for this in the bar's width
+          barProgress = adjustedProgress + (handlePercent / 2);
+
+      // Move the handle from the left based on the adjected progress
+      handle.el.style.left = _V_.round(adjustedProgress * 100, 2) + "%";
+    }
+
+    // Set the new bar width
+    bar.el.style.width = _V_.round(barProgress * 100, 2) + "%";
+  },
+
+  calculateDistance: function(event){
+    var box = this.el,
+        boxX = _V_.findPosX(box),
+        boxW = box.offsetWidth,
+        handle = this.handle;
+
+    if (handle) {
+      var handleW = handle.el.offsetWidth;
+
+      // Adjusted X and Width, so handle doesn't go outside the bar
+      boxX = boxX + (handleW / 2);
+      boxW = boxW - handleW;
+    }
+
+    // Percent that the click is through the adjusted area
+    return Math.max(0, Math.min(1, (event.pageX - boxX) / boxW));
+  },
+
+  onFocus: function(event){
+    _V_.on(document, "keyup", _V_.proxy(this, this.onKeyPress));
+  },
+
+  onKeyPress: function(event){
+    if (event.which == 37) { // Left Arrow
+      event.preventDefault();
+      this.stepBack();
+    } else if (event.which == 39) { // Right Arrow
+      event.preventDefault();
+      this.stepForward();
+    }
+  },
+
+  onBlur: function(event){
+    _V_.off(document, "keyup", _V_.proxy(this, this.onKeyPress));
+  }
+});
+
+
+/* Progress
+================================================================================ */
+
+// Progress Control: Seek, Load Progress, and Play Progress
+_V_.ProgressControl = _V_.Component.extend({
+
+  options: {
+    components: {
+      "seekBar": {}
+    }
+  },
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-progress-control vjs-control"
+    });
+  }
+
+});
+
+// Seek Bar and holder for the progress bars
+_V_.SeekBar = _V_.Slider.extend({
+
+  options: {
+    components: {
+      "loadProgressBar": {},
+
+      // Set property names to bar and handle to match with the parent Slider class is looking for
+      "bar": { componentClass: "PlayProgressBar" },
+      "handle": { componentClass: "SeekHandle" }
+    }
+  },
+
+  playerEvent: "timeupdate",
+
+  init: function(player, options){
+    this._super(player, options);
+  },
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-progress-holder"
+    });
+  },
+
+  getPercent: function(){
+    return this.player.currentTime() / this.player.duration();
+  },
+
+  onMouseDown: function(event){
+    this._super(event);
+
+    this.player.scrubbing = true;
+
+    this.videoWasPlaying = !this.player.paused();
+    this.player.pause();
+  },
+
+  onMouseMove: function(event){
+    var newTime = this.calculateDistance(event) * this.player.duration();
+
+    // Don't let video end while scrubbing.
+    if (newTime == this.player.duration()) { newTime = newTime - 0.1; }
+
+    // Set new time (tell player to seek to new time)
+    this.player.currentTime(newTime);
+  },
+
+  onMouseUp: function(event){
+    this._super(event);
+
+    this.player.scrubbing = false;
+    if (this.videoWasPlaying) {
+      this.player.play();
+    }
+  },
+
+  stepForward: function(){
+    this.player.currentTime(this.player.currentTime() + 1);
+  },
+
+  stepBack: function(){
+    this.player.currentTime(this.player.currentTime() - 1);
+  }
+
+});
+
+// Load Progress Bar
+_V_.LoadProgressBar = _V_.Component.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+    player.on("progress", _V_.proxy(this, this.update));
+  },
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-load-progress",
+      innerHTML: '<span class="vjs-control-text">Loaded: 0%</span>'
+    });
+  },
+
+  update: function(){
+    if (this.el.style) { this.el.style.width = _V_.round(this.player.bufferedPercent() * 100, 2) + "%"; }
+  }
+
+});
+
+// Play Progress Bar
+_V_.PlayProgressBar = _V_.Component.extend({
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-play-progress",
+      innerHTML: '<span class="vjs-control-text">Progress: 0%</span>'
+    });
+  }
+
+});
+
+// Seek Handle
+// SeekBar Behavior includes play progress bar, and seek handle
+// Needed so it can determine seek position based on handle position/size
+_V_.SeekHandle = _V_.Component.extend({
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-seek-handle",
+      innerHTML: '<span class="vjs-control-text">00:00</span>'
+    });
+  }
+
+});
+
+/* Volume Scrubber
+================================================================================ */
+// Progress Control: Seek, Load Progress, and Play Progress
+_V_.VolumeControl = _V_.Component.extend({
+
+  options: {
+    components: {
+      "volumeBar": {}
+    }
+  },
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-volume-control vjs-control"
+    });
+  }
+
+});
+
+_V_.VolumeBar = _V_.Slider.extend({
+
+  options: {
+    components: {
+      "bar": { componentClass: "VolumeLevel" },
+      "handle": { componentClass: "VolumeHandle" }
+    }
+  },
+
+  playerEvent: "volumechange",
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-volume-bar"
+    });
+  },
+
+  onMouseMove: function(event) {
+    this.player.volume(this.calculateDistance(event));
+  },
+
+  getPercent: function(){
+   return this.player.volume();
+  },
+
+  stepForward: function(){
+    this.player.volume(this.player.volume() + 0.1);
+  },
+
+  stepBack: function(){
+    this.player.volume(this.player.volume() - 0.1);
+  }
+});
+
+_V_.VolumeLevel = _V_.Component.extend({
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-volume-level",
+      innerHTML: '<span class="vjs-control-text"></span>'
+    });
+  }
+
+});
+
+_V_.VolumeHandle = _V_.Component.extend({
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-volume-handle",
+      innerHTML: '<span class="vjs-control-text"></span>'
+      // tabindex: 0,
+      // role: "slider", "aria-valuenow": 0, "aria-valuemin": 0, "aria-valuemax": 100
+    });
+  }
+
+});
+
+_V_.MuteToggle = _V_.Button.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+
+    player.on("volumechange", _V_.proxy(this, this.update));
+  },
+
+  createElement: function(){
+    return this._super("div", {
+      className: "vjs-mute-control vjs-control",
+      innerHTML: '<div><span class="vjs-control-text">Mute</span></div>'
+    });
+  },
+
+  onClick: function(event){
+    this.player.muted( this.player.muted() ? false : true );
+  },
+
+  update: function(event){
+    var vol = this.player.volume(),
+        level = 3;
+
+    if (vol == 0 || this.player.muted()) {
+      level = 0;
+    } else if (vol < 0.33) {
+      level = 1;
+    } else if (vol < 0.67) {
+      level = 2;
+    }
+
+    /* TODO improve muted icon classes */
+    _V_.each.call(this, [0,1,2,3], function(i){
+      _V_.removeClass(this.el, "vjs-vol-"+i);
+    });
+    _V_.addClass(this.el, "vjs-vol-"+level);
+  }
+
+});
+
+
+/* Poster Image
+================================================================================ */
+_V_.PosterImage = _V_.Button.extend({
+  init: function(player, options){
+    this._super(player, options);
+
+    if (!this.player.options.poster) {
+      this.hide();
+    }
+
+    player.on("play", _V_.proxy(this, this.hide));
+  },
+
+  createElement: function(){
+    return _V_.createElement("img", {
+      className: "vjs-poster",
+      src: this.player.options.poster,
+
+      // Don't want poster to be tabbable.
+      tabIndex: -1
+    });
+  },
+
+  onClick: function(){
+    this.player.play();
+  }
+});
+
+/* Menu
+================================================================================ */
+// The base for text track and settings menu buttons.
+_V_.Menu = _V_.Component.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+  },
+
+  addItem: function(component){
+    this.addComponent(component);
+    component.on("click", this.proxy(function(){
+      this.unlockShowing();
+    }));
+  },
+
+  createElement: function(){
+    return this._super("ul", {
+      className: "vjs-menu"
+    });
+  }
+
+});
+
+_V_.MenuItem = _V_.Button.extend({
+
+  init: function(player, options){
+    this._super(player, options);
+
+    if (options.selected) {
+      this.addClass("vjs-selected");
+    }
+  },
+
+  createElement: function(type, attrs){
+    return this._super("li", _V_.merge({
+      className: "vjs-menu-item",
+      innerHTML: this.options.label
+    }, attrs));
+  },
+
+  onClick: function(){
+    this.selected(true);
+  },
+
+  selected: function(selected){
+    if (selected) {
+      this.addClass("vjs-selected");
+    } else {
+      this.removeClass("vjs-selected")
+    }
+  }
+
+});// TEXT TRACKS
 // Text tracks are tracks of timed text events.
 //    Captions - text displayed over the video for the hearing impared
 //    Subtitles - text displayed over the video for those who don't understand langauge in the video
@@ -3793,7 +3620,7 @@ _V_.merge(_V_.Player.prototype, {
 
     // Trigger trackchange event, captionstrackchange, subtitlestrackchange, etc.
     if (kind) {
-      this.triggerEvent(kind+"trackchange");
+      this.trigger(kind+"trackchange");
     }
 
     return this;
@@ -3914,10 +3741,10 @@ _V_.Track = _V_.Component.extend({
     if (this.mode == 0) {
       // Update current cue on timeupdate
       // Using unique ID for proxy function so other tracks don't remove listener
-      this.player.addEvent("timeupdate", this.proxy(this.update, this.id));
+      this.player.on("timeupdate", this.proxy(this.update, this.id));
 
       // Reset cue time on media end
-      this.player.addEvent("ended", this.proxy(this.reset, this.id));
+      this.player.on("ended", this.proxy(this.reset, this.id));
 
       // Add to display
       if (this.kind == "captions" || this.kind == "subtitles") {
@@ -3929,8 +3756,8 @@ _V_.Track = _V_.Component.extend({
   // Turn off cue tracking.
   deactivate: function(){
     // Using unique ID for proxy function so other tracks don't remove listener
-    this.player.removeEvent("timeupdate", this.proxy(this.update, this.id));
-    this.player.removeEvent("ended", this.proxy(this.reset, this.id));
+    this.player.off("timeupdate", this.proxy(this.update, this.id));
+    this.player.off("ended", this.proxy(this.reset, this.id));
     this.reset(); // Reset
 
     // Remove from display
@@ -3964,7 +3791,7 @@ _V_.Track = _V_.Component.extend({
   onError: function(err){
     this.error = err;
     this.readyState = 3;
-    this.triggerEvent("error");
+    this.trigger("error");
   },
 
   // Parse the WebVTT text format for cue times.
@@ -4019,7 +3846,7 @@ _V_.Track = _V_.Component.extend({
     }
 
     this.readyState = 2;
-    this.triggerEvent("loaded");
+    this.trigger("loaded");
   },
 
   parseCueTime: function(timeText) {
@@ -4167,7 +3994,7 @@ _V_.Track = _V_.Component.extend({
 
         this.updateDisplay();
 
-        this.triggerEvent("cuechange");
+        this.trigger("cuechange");
       }
     }
   },
@@ -4234,7 +4061,7 @@ _V_.TextTrackMenuItem = _V_.MenuItem.extend({
     options.selected = track["default"];
     this._super(player, options);
 
-    this.player.addEvent(track.kind + "trackchange", _V_.proxy(this, this.update));
+    this.player.on(track.kind + "trackchange", _V_.proxy(this, this.update));
   },
 
   onClick: function(){
@@ -4415,7 +4242,7 @@ _V_.ChaptersButton = _V_.TextTrackButton.extend({
       if (track.kind == this.kind && track["default"]) {
         if (track.readyState < 2) {
           this.chaptersTrack = track;
-          track.addEvent("loaded", this.proxy(this.createMenu));
+          track.on("loaded", this.proxy(this.createMenu));
           return;
         } else {
           chaptersTrack = track;
@@ -4473,7 +4300,7 @@ _V_.ChaptersTrackMenuItem = _V_.MenuItem.extend({
     options.selected = (cue.startTime <= currentTime && currentTime < cue.endTime);
     this._super(player, options);
 
-    track.addEvent("cuechange", _V_.proxy(this, this.update));
+    track.on("cuechange", _V_.proxy(this, this.update));
   },
 
   onClick: function(){
